@@ -1,0 +1,850 @@
+---
+title: "THE RED AND THE BLACK"
+author: "Clare Tang"
+date: "2021/11/27"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(gutenbergr)
+library(dplyr)
+library(stringr)
+library(janeaustenr)
+library(tidytext)
+library(tidyr)
+library(ggplot2)
+library(reshape2)
+library(sentimentr)
+library(magrittr)
+library(tnum)
+library(wordcloud)
+library(wordcloud2)
+library(egg)
+library(htmlwidgets)
+library(webshot)
+
+# Madame de Rênal
+# Mathilde de la Mole
+```
+
+# Backgroud
+
+_THE RED AND THE BLACK_ is a historical psychological novel in two volumes written by Stendhal, published in 1830. It chronicles the attempts of a provincial young man to rise socially beyond his modest upbringing through a combination of talent, hard work, deception, and hypocrisy. He ultimately allows his passions to betray him.
+
+Julien Sorel, the Bildungsroman, is an intelligent and ambitious protagonist. He comes from a poor family and fails to understand much about the ways of the world he sets out to conquer. He harbors many romantic illusions, but becomes mostly a pawn in the political machinations of the ruthless and influential people about him. The adventures of the hero satirize early 19th-century French society, accusing the aristocracy and Catholic clergy of being hypocritical and materialistic, foretelling the radical changes that will soon depose them from their leading roles in French society.@Manual{  url = {https://en.wikipedia.org/wiki/The_Red_and_the_Black}}
+
+
+# Gutenberg analysis
+
+The book id for _THE RED AND THE BLACK_ is 44747 on [gutenberg website](http://aleph.gutenberg.org.). The original dataframe contains the id and text of the book in unorganized form. After using function unnest_tokens and filtering out the words that do not have real meanings from stop_word database, each observation only include a meaningful word extracted from the book. Plus, the line number and the chapter the words belong to are also included. Analysis of sentiment uses [Text mining in R](https://www.tidytextmining.com/index.html) as reference.
+
+```{r include=FALSE}
+# gutenberg_metadata
+# id:44747
+data(stop_words)
+
+# download the book from gutenberg
+randb <- gutenberg_download(44747, mirror = "http://aleph.gutenberg.org")
+
+randb <- randb[1:21282, ]
+# separate in words
+tidy_randb <- randb %>% 
+  unnest_tokens(word, text) %>% 
+  anti_join(stop_words)
+
+tidy_randb %>% count(word, sort = TRUE)
+
+# table includes linenumber and chapter of words
+tidy_randb <- randb %>%
+  mutate(
+    linenumber = row_number(),
+    chapter = cumsum(str_detect(text, 
+                                regex("^chapter [\\divxlc]", 
+                                      ignore_case = TRUE)))) %>%
+  unnest_tokens(word, text)
+```
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+head(tidy_randb)
+```
+
+
+# Word clouds for the whole book
+
+1. Wordcloud below shows 100 most common used words in _THE RED AND THE BLACK_. The size of the words in the wordcloud represents the frequency of the words shown in the book. Apparently, the hero name julien appears the most. "de" means "of" in English. 
+```{r message=FALSE, warning=FALSE, include=FALSE}
+tidy_randb %>%
+  anti_join(stop_words, by = "word") %>%
+  count(word) %>%
+  with(wordcloud(word, n, max.words = 100))
+```
+
+2. Wordcloud below shows most commonly used words that are positive or negative in the book. For example, 'death' and 'poor' are often used in describing the plots. 'great', 'like' and 'love' are frequently used and it makes sense because the book involves the love story of julien.  
+```{r message=FALSE, warning=FALSE, include=FALSE}
+tidy_randb %>%
+  inner_join(get_sentiments("bing"), by = "word") %>%
+  count(word, sentiment, sort = TRUE) %>%
+  acast(word ~ sentiment, value.var = "n", fill = 0) %>%
+  comparison.cloud(colors = c("gray80", "gray20"),
+                   max.words = 100)
+
+# dim(tidy_randb)
+```
+
+
+# Sentiment analysis of words
+
+- There are three main lexicon used when doing sentiment analysis for words. Here follow their results and another lexicon called loughran is also analyzed. 
+```{r include=FALSE}
+# sentiment information references
+afinn <- get_sentiments("afinn")
+bing <- get_sentiments("bing")
+nrc <- get_sentiments("nrc")
+loug <- get_sentiments("loughran")
+```
+
+## Lexicon NRC
+
+- There are 10 types of sentiment levels in NRC: trust, surprise, positive, joy, anticipation, fear, negative, sadness, anger, disgust. 
+- The graphs below represent: 
+    1. The number of words in each level of sentiment
+    2. 10 mostly used words in each level of sentiment
+    3. Wordcloud of 100 mostly used words in the 'joy' sentiment level
+    4. Sentiment value based on index of 100 (100 promises senitment can be analyzed within the chapter)
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# types of sentiment
+# unique(nrc$sentiment)
+# 10 types:
+# "trust", "surprise", "positive", "joy", "anticipation"
+# "fear", "negative", "sadness", "anger", "disgust"
+
+# numbers of 10 levels of sentiment
+nrc_sentiment_count <- tidy_randb %>% 
+  inner_join(nrc, by = "word") %>% 
+  count(sentiment, sort = TRUE)
+
+# bar plot of numbers of sentiment
+ggplot(nrc_sentiment_count, aes(x = sentiment, y = n))+
+  geom_col()+
+  geom_text(aes(label = n), nudge_y = 600)+
+  labs(title = "Numbers of sentiment by lexicons NRC")
+```
+```{r include=FALSE}
+
+# TAKE "joy" AS AN EXAPLE
+# joy words in nrc
+nrc_joy <- get_sentiments("nrc") %>% 
+  filter(sentiment == "joy")
+# joy words counts in randb
+nrc_joy_word_counts <- tidy_randb %>%
+  inner_join(nrc, by = "word") %>% 
+  filter(sentiment == "joy") %>% 
+  count(word, sentiment, sort = TRUE)
+
+
+# value of words in THE RED AND THE BLACK
+nrc_word_counts <- tidy_randb %>%
+  inner_join(nrc, by = "word") %>%  
+  count(word, sentiment, sort = TRUE)
+
+
+nrc_word_counts %>%
+  group_by(sentiment) %>%
+  slice_max(n, n = 10) %>% 
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(x = "Contribution to sentiment by lexicons NRC", y = NULL)
+```
+
+```{r include=FALSE}
+
+# wordcloud for joy words
+# wordcloud2(nrc_joy_word_counts %>% select(word, n), size=1.6, color='random-dark')
+# another graph
+wc1 <- wordcloud2(nrc_joy_word_counts %>% select(word, n), size = 1, minRotation = -0.52, maxRotation = -0.52, rotateRatio = 2)
+
+# save image
+
+# saveWidget(wc1,"wc1.html",selfcontained = F)
+# webshot("wc1.html", "wc1.png", delay =5, vwidth = 650, vheight=650)
+```
+
+![Wordcloud for joy words by lexicon NRC](wc1.png)
+
+```{r include=FALSE}
+# define the index
+# considering whether changes in sentiment within chapters can be detected
+# tidy_randb %>% count(chapter, sort = TRUE)
+
+randb_nrc_senti <- tidy_randb %>%
+  inner_join(nrc, by = "word") %>%
+  count(gutenberg_id, index = linenumber %/% 100, sentiment) %>%
+  pivot_wider(names_from = sentiment, values_from = n, values_fill = 0) %>% 
+  mutate(sentiment = positive- negative)
+# sentiment is created by the difference of the five good sentiment words and five bad sentiment words
+# trust+ surprise+ positive+ joy+ anticipation- fear- negative- sadness- anger- disgust
+
+# Sentiment plot of randb
+p_nrc <- ggplot(randb_nrc_senti, aes(index, sentiment)) + geom_col(show.legend = FALSE, fill = "mediumorchid2")+
+  labs(title = "Sentiment of THE RED AND BLACK by lexicons NRC")
+p_nrc
+
+```
+
+
+## Lexicon AFINN
+
+- There are 10 different value of sentiment in AFINN: -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5
+- The graphs below represent: 
+    1. The number of words in each value of sentiment
+    2. 10 mostly used words in each value of sentiment and their frequencies
+    3. Wordcloud of 100 mostly used words with sentiment value of -2
+    4. Wordcloud of 100 mostly used words with sentiment value of 2
+    5. Sentiment value based on index of 100 (100 promises senitment can be analyzed within the chapter)
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+# types of sentiment
+# unique(afinn$value)
+# 11 levels of value: -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5
+
+# value of words in THE RED AND THE BLACK
+afinn_word_counts <- tidy_randb %>%
+  inner_join(afinn, by = "word") %>%  
+  count(word, value, sort = TRUE)
+
+afinn_sentiment_counts <- tidy_randb %>%
+  inner_join(afinn, by = "word") %>%  
+  count(value, sort = TRUE)
+
+# bar plot of numbers of sentiment
+ggplot(afinn_sentiment_counts, aes(x = value, y = n))+
+  geom_col()+
+  geom_text(aes(label = n), nudge_y = 150)+
+  labs(title = "Numbers of sentiment by lexicons AFINN")
+
+afinn_word_counts %>%
+  group_by(value) %>%
+  slice_max(n, n = 10) %>% 
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word, fill = value)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~value, scales = "free_y", ncol = 4) +
+  labs(x = "Contribution to sentiment by lexicons AFINN", y = NULL)
+
+# wordcloud for words valued `-2`
+wc2 <- wordcloud2(afinn_word_counts %>% filter(value == -2) %>% select(word, n), size=1.6, color='grey')
+# wordcloud for words valued `2`
+wc3 <- wordcloud2(afinn_word_counts %>% filter(value == 2) %>% select(word, n), size=1.6, color='cornflowerblue')
+
+# save image
+# 
+# saveWidget(wc3,"wc3.html",selfcontained = F)
+# webshot("wc3.html", "wc3.png", delay =5, vwidth = 650, vheight=650)
+```
+
+![Wordcloud of positive words by lexicon AFIN](wc2.png)
+
+![Wordcloud of negative words by lexicon AFINN](wc3.png)
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# numbers of 11 levels of value
+afinn_value_count <- tidy_randb %>% 
+  inner_join(afinn, by = "word") 
+  # %>% count(value, sort = TRUE)
+
+
+randb_afinn_senti <- tidy_randb %>%
+  inner_join(afinn, by = "word") %>%
+  count(gutenberg_id, index = linenumber %/% 100, value) %>%
+  pivot_wider(names_from = value, values_from = n, values_fill = 0) %>% 
+  mutate(sentiment = `-5`*(-5)+ `-4`*(-4)+ `-3`*(-3)+ `-2`*(-2)+ `-1`*(-1)+ `1`+ `2`*2+ `3`*3+ `4`*4+ `5`*5)%>% 
+  mutate(method = "AFINN")
+
+# Sentiment plot of afinn
+p_afinn <- ggplot(randb_afinn_senti, aes(index, sentiment)) + geom_col(show.legend = FALSE, fill = "lightcoral")+
+  labs(title = "Sentiment of THE RED AND BLACK by lexicons AFINN")
+p_afinn
+```
+
+
+## Lexicon BING
+
+- There are 2 types of sentiment levels in BING: positive and negative
+- The graphs below represent: 
+    1. The number of words in each level of sentiment
+    2. 10 mostly used words in each level of sentiment
+    3. Wordclouds of 100 mostly used words for each sentiment level
+    4. Sentiment value based on index of 100 (100 promises sentiment can be analyzed within the chapter)
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+# types of sentiment
+# unique(bing$sentiment)
+# 2 levels: negative, positive
+
+# numbers of 2 levels of sentiment
+bing_sentiment_count <- tidy_randb %>% 
+  inner_join(bing, by = "word") %>% 
+  count(sentiment, sort = TRUE)
+
+# bar plot of numbers of sentiment
+ggplot(bing_sentiment_count, aes(x = sentiment, y = n))+
+  geom_col(width = .5)+
+  geom_text(aes(label = n), nudge_y = 600)+
+  labs(title = "Numbers of sentiment by lexicons BING")
+
+# value of words in THE RED AND THE BLACK
+bing_word_counts <- tidy_randb %>%
+  inner_join(bing, by = "word") %>%  
+  count(word, sentiment, sort = TRUE)
+
+bing_word_counts %>%
+  group_by(sentiment) %>%
+  slice_max(n, n = 10) %>% 
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(x = "Contribution to sentiment by lexicons BING", y = NULL)
+
+# wordcloud for positive
+wc4 <- wordcloud2(bing_word_counts %>% filter(sentiment == "positive") %>% select(word, n), size=1.6, color='pink')
+# wordcloud for negative
+wc5 <- wordcloud2(bing_word_counts %>% filter(sentiment == "negative") %>% select(word, n), size=1.6, color='purple')
+
+# save image
+
+# saveWidget(wc5,"wc5.html",selfcontained = F)
+# webshot("wc5.html", "wc5.png", delay = 10, vwidth = 650, vheight=650)
+```
+
+![Wordcloud of negative words by lexicon BING](wc4.png)
+
+![Wordcloud negative words by lexicon BING](wc5.png)
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# numbers of 2 levels sentiment
+bing_value_count <- tidy_randb %>% 
+  inner_join(bing, by = "word") %>% 
+  count(sentiment, sort = TRUE)
+
+
+randb_bing_senti <- tidy_randb %>%
+  inner_join(bing, by = "word") %>%
+  count(gutenberg_id, index = linenumber %/% 100, sentiment) %>%
+  pivot_wider(names_from = sentiment, values_from = n, values_fill = 0) %>% 
+  mutate(sentiment = positive-negative)
+
+# Sentiment plot of bing
+p_bing <- ggplot(randb_bing_senti, aes(index, sentiment)) + geom_col(show.legend = FALSE, fill = "limegreen")+
+  labs(title = "Sentiment of THE RED AND BLACK by lexicons BING")
+p_bing
+```
+
+## Lexicon LOUGHRAN
+
+- There are 6 types of sentiment levels in LOUGHRAN: negative, positive, uncertainty, litigious, constraining, superfluous 
+- The graphs below represent: 
+    1. The number of words in each level of sentiment
+    2. 10 mostly used words in each level of sentiment
+    3. Wordclouds of 100 mostly used words in positive
+    4. The frequency change of each sentiment level based on chapters
+    5. Sentiment value based on index of 100 (100 promises sentiment can be analyzed within the chapter)
+- We can notice that the levels of sentiment in LOUGHRAN are mostly negative words, and we can also understand from plot 5 that the values of sentiment are mostly below the zero line. 
+```{r message=FALSE, warning=FALSE, include=FALSE}
+
+# types of sentiment
+# unique(loug$sentiment)
+# 6 levels:  "negative", "positive", "uncertainty", "litigious", "constraining", "superfluous" 
+
+# numbers of 2 levels of sentiment
+loug_sentiment_count <- tidy_randb %>% 
+  inner_join(loug) %>% 
+  count(sentiment, sort = TRUE)
+
+# bar plot of numbers of sentiment
+ggplot(loug_sentiment_count, aes(x = sentiment, y = n))+
+  geom_col(width = .5)+
+  geom_text(aes(label = n), nudge_y = 150)+
+  labs(title = "Numbers of sentiment by lexicons LOUG")
+
+# value of words in THE RED AND THE BLACK
+loug_word_counts <- tidy_randb %>%
+  inner_join(loug) %>%  
+  count(word, sentiment, sort = TRUE)
+
+loug_word_counts %>%
+  group_by(sentiment) %>%
+  slice_max(n, n = 10) %>% 
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(x = "Contribution to sentiment by lexicons LOUG", y = NULL)
+
+# wordclouds
+colorVec = rep(c('lightsalmon', 'skyblue'), length.out=nrow(demoFreq))
+wc6 <- wordcloud2(loug_word_counts %>% filter(sentiment == "positive") %>% select(word, n), size =1.5, color = colorVec)
+
+# save image
+
+# saveWidget(wc6,"wc6.html",selfcontained = F)
+# webshot("wc6.html", "wc6.png", delay = 10, vwidth = 650, vheight=650)
+```
+
+![Wordcloud of positive words by lexicon LOUGHRAN](wc6.png)
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+tidy_randb %>%
+  inner_join(loug) %>% 
+  count(chapter, sentiment) %>%
+  filter(sentiment %in% c("positive", "negative", 
+                          "uncertainty", "litigious", 
+                          "constraining", "superfluous")) %>%
+  mutate(sentiment = factor(sentiment, levels = c("negative",
+                                                  "positive",
+                                                  "uncertainty",
+                                                  "litigious",
+                                                  "constraining",
+                                                  "superfluous"))) %>%
+  ggplot(aes(chapter, n, fill = sentiment)) +
+  geom_area(position = "identity", alpha = 0.5)+
+  labs(y = "Frequency", x = "Chapter",
+         title = "Sentiment analysis by lexicon LOUGHRAN")
+
+randb_loug_senti <- tidy_randb %>%
+  inner_join(loug, by = "word") %>%
+  count(gutenberg_id, index = linenumber %/% 100, sentiment) %>%
+  pivot_wider(names_from = sentiment, values_from = n, values_fill = 0) %>% 
+  mutate(sentiment = positive-negative)
+
+# Sentiment plot of bing
+p_loug <- ggplot(randb_loug_senti, aes(index, sentiment)) + geom_col(show.legend = FALSE, fill = "turquoise3")+
+  labs(title = "Sentiment of THE RED AND BLACK by lexicons LOUGHRAN")
+p_loug
+
+```
+
+
+## Compare lexicons
+
+- Graphs below shows the comparison of sentiment for four lexicon methods. 
+- The NRC sentiment is high, the AFINN sentiment has more variance, the Bing et al. sentiment has longer stretches of similar text, but all three agree roughly on the overall trends in the sentiment through a narrative arc. However, sentiment of LOUGHRAN are mostly below the zero line which can be explained by that most sentiment level in lexicon LOUGHRAN are negative classifications. As we can seen from the graphs of numbers of words in each sentiment level above. 
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+bing_nrc_loug <- bind_rows(
+  tidy_randb %>% 
+    inner_join(bing, by = "word") %>%
+    mutate(method = "Bing et al."),
+  
+  tidy_randb %>% 
+    inner_join(nrc %>% 
+                 filter(sentiment %in% c("positive", 
+                                         "negative")), by = "word"
+    ) %>%
+    mutate(method = "NRC"), 
+  
+  tidy_randb %>% 
+    inner_join(loug %>% 
+                 filter(sentiment %in% c("positive", 
+                                         "negative")), by = "word"
+    ) %>%
+    mutate(method = "LOUGHRAN")
+  ) %>%
+  count(method, index = linenumber %/% 100, sentiment) %>%
+  pivot_wider(names_from = sentiment,
+              values_from = n,
+              values_fill = 0) %>% 
+  mutate(sentiment = positive - negative)
+
+
+bind_rows(randb_afinn_senti, 
+          bing_nrc_loug) %>%
+  ggplot(aes(index, sentiment, fill = method)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~method, ncol = 1, scales = "free_y")
+
+```
+- Although the book ends with Julien death, the whole book mainly talks about how he pursed his occupation and love. And Stendhal shows how Julien lost his reputation and got sentenced in the last several paragraphs, which is the main part that most negative words should be used. Given the above reasons, I think using lexicon BING is more proper for this book because there are a concentrated negative value of sentiment in the BING graph and the value of sentiment presents evenly in the previous chapters. 
+
+# Tnum
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+
+# install.packages("devtools")
+# devtools::install_github("Truenumbers/tnum/tnum", force = TRUE)
+# library(tnum)
+tnum.authorize(ip = "mssp1.bu.edu")
+# default number space is testspace
+# tnum.setSpace("test2")
+# THE RED AND THE BLACK is such a large book that working in test2 space is slow, so I work in in the testspace
+
+# verify that I can get access to the space
+tnum.getDBPathList(taxonomy = "subject", levels = 2, max = 500)
+# a list of the subject phrase-paths; how many of subject phrase-path tree is reported, 1 is the root
+# my root: "randb/heading", "randb/section" 
+
+# Sys.setlocale("LC_ALL", "English")
+source("Book2TN-v3 - hw.R")
+
+```
+
+
+- The table below lists first ten rows of the location of the first ten chapters. There are 72 chapters in _THE RED AND THE BLOACK_. 
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+## Try tnum functions
+# all information, start from 1 and show 100
+q1 <- tnum.query(query = "randb# has *", max = 107940) 
+df1 <- tnum.objectsToDf(q1)
+# TOTAL:randb/section:0175/paragraph:0044/sentence:0002
+
+# all headings
+q2 <- tnum.query(query = "randb/heading# has *", max = 20)
+df2 <- tnum.objectsToDf(q2)
+# ?what's the numeirc.value for ordinal
+
+q3 <- tnum.query(query = "randb/heading:0002# has *")
+df3 <- tnum.objectsToDf(q3)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# all ordinal
+ord <- tnum.query("randb# has ordinal", max = 500)
+
+
+# ALL HEADINGS locations
+ord_ch1 <- tnum.query("randb/heading# has text", max = 501)
+ord_ch1 <- tnum.objectsToDf(ord_ch1)
+ord_ch1 %<>% filter(date == "2021-11-29")
+ord_ch2 <- tnum.query("randb/heading# has ordinal", max = 501) # , start = 1 ,max=18
+ord_ch2 <- tnum.objectsToDf(ord_ch2)
+ord_ch2 %<>% filter(date == "2021-11-29")
+
+chapter_locations <- left_join(select(ord_ch1, subject, string.value), 
+                               select(ord_ch2, subject, numeric.value)) 
+
+head(chapter_locations %<>% filter(str_detect(string.value, 'CHAPTER')), 10)
+# totally, 72 chapters
+
+# w15 <- tnum.query("randb/section:0022# has ordinal", max = 522)
+# wdf15 <- tnum.objectsToDf(w15)
+# wdf15 %<>% filter(date == "2021-11-29")
+# 
+# ch3_txt <- tnum.query("randb/section:0022/paragraph:0001/# has text")
+# ch3_txt_df <- tnum.objectsToDf(ch3_txt) %>% filter(date == "2021-11-29")
+ 
+```
+
+
+## Analysis of sentenses, paragraphs with example(Chapter 17)
+
+- Here shows the number of words in each sentence in paragraph 17, chapter 17. 
+```{r }
+#   TAKE CHAPTER 17 AS AN EXAMPLE
+## focus on one paragraph -- note the word count for each sentence
+q4 <- tnum.query("randb/section:0017/paragraph:0017# has count#")
+df4 <- tnum.objectsToDf(q4)
+df4 %<>% filter(date == "2021-11-29")
+df4 %>% select(subject, property, numeric.value)
+```
+
+- Here shows the first sentence of paragraph 17 in chapter 17. 
+```{r }
+## and now look at the text in a sentence
+q5 <- tnum.query("randb/section:0017/paragraph:0017/sentence:0001# has text")
+df5 <- tnum.objectsToDf(q5)
+df5 %<>% filter(date == "2021-11-29")
+df5[, 1:3]
+```
+
+- Here shows the sentiment score and the number of words in each sentence in paragraph 17 in chapter 17. 
+```{r}
+## To extract a paragraph of text
+q6 <- tnum.query("randb/section:0017/paragraph:0017# has text", max = 10)
+df6 <- tnum.objectsToDf(q6) %>% filter(date == "2021-11-29")
+para_text <- df6 %>% pull(string.value) %>% 
+                      str_replace_all("\"","") %>% 
+                      str_flatten(collapse = " ")
+
+rb1 <- get_sentences(para_text)
+
+## to get sentiment scores by sentence
+sentiment(rb1)
+```
+
+- This is the sentiment score for the whole paragraph 17 in chapter 17. 
+```{r}
+## to get sentiment scores aggregated by paragraph
+sentiment_by(rb1)
+```
+
+
+
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+## Analysis of sentenses, paragraphs for whole book
+# paragraph
+q7 <- tnum.query("randb# has count#", max = 35646)
+df7 <- tnum.objectsToDf(q7)
+df7 %<>% filter(date == "2021-11-29")
+df7
+
+# text
+q8 <- tnum.query("randb# has text", max = 36147)
+df8 <- tnum.objectsToDf(q8)
+df8 %<>% filter(date == "2021-11-29")
+# View(df8)
+
+# untoken the whole book to words
+df8_word <- df8 %>% 
+  unnest_tokens(word, string.value) %>% 
+  anti_join(stop_words)
+
+df8_word %>% count(word, sort = TRUE)
+
+```
+
+
+# Word analysis after tnum for the whole book
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+# table includes linenumber and chapter of words
+
+df8_lc <- df8 %>% filter(!is.na(string.value)) %>%
+  mutate(
+    linenumber = row_number(),
+    chapter = cumsum(str_detect(string.value,
+                                "CHAPTER ."))) %>%
+  unnest_tokens(word, string.value)
+
+
+
+try <- df8 %>% filter(!is.na(string.value)) %>%
+  mutate(
+    linenumber = row_number(),
+    chapter = cumsum(str_detect(string.value,
+                                regex("^chapter [\\divxlc]", 
+                                      ignore_case = TRUE)))) %>%
+  unnest_tokens(word, string.value) 
+
+max(try$linenumber)
+           
+# unique(df8_lc$chapter) # 72 chapters
+# View(df8_lc)
+max(df8_lc$linenumber)
+max(tidy_randb$linenumber)
+
+```
+
+- Change the index to 60 in order to compare the word sentiment analysis in task 2
+```{r message=FALSE, warning=FALSE, include=FALSE}
+# nrc
+
+# joy words counts in randb
+nrc_joy_word_counts_tnum <- df8_lc %>%
+  inner_join(nrc, by = "word") %>% 
+  filter(sentiment == "joy") %>% 
+  count(word, sentiment, sort = TRUE)
+
+# df8_lc %>% count(chapter, sort = TRUE)
+
+randb_nrc_senti_tnum <- df8_lc %>%
+  inner_join(nrc, by = "word") %>%
+  count(property, index = linenumber %/% 60, sentiment) %>%
+  pivot_wider(names_from = sentiment, values_from = n, values_fill = 0) %>% 
+  mutate(sentiment = positive- negative)
+# sentiment is created by the difference of the five good sentiment words and five bad sentiment words
+
+# Sentiment plot of randb
+p_nrc_tnum <- ggplot(randb_nrc_senti_tnum, aes(index, sentiment)) + geom_col(show.legend = FALSE, fill = "mediumorchid2")+
+  labs(title = "Sentiment of THE RED AND BLACK by lexicons NRC after TNUM")
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+#afinn
+
+afinn_word_counts_tnum <- df8_lc %>%
+  inner_join(afinn, by = "word") %>%  
+  count(word, value, sort = TRUE)
+
+afinn_value_count_tnum <- df8_lc %>% 
+  inner_join(afinn, by = "word") 
+  # %>% count(value, sort = TRUE)
+
+# histogram plot
+# ggplot(afinn_value_count_tnum, aes(x = value))+
+#   geom_histogram(binwidth = .5)
+
+randb_afinn_senti_tnum <- df8_lc %>%
+  inner_join(afinn, by = "word") %>%
+  count(property, index = linenumber %/% 60, value) %>%
+  pivot_wider(names_from = value, values_from = n, values_fill = 0) %>% 
+  mutate(sentiment = `-5`*(-5)+ `-4`*(-4)+ `-3`*(-3)+ `-2`*(-2)+ `-1`*(-1)+ `1`+ `2`*2+ `3`*3+ `4`*4+ `5`*5) %>% 
+  mutate(method = "AFINN")
+
+# Sentiment plot of afinn
+p_afinn_tnum <- ggplot(randb_afinn_senti_tnum, aes(index, sentiment)) + geom_col(show.legend = FALSE, fill = "lightcoral")+
+  labs(title = "Sentiment of THE RED AND BLACK by lexicons AFINN after TNUM")
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+# bing
+# value of words in THE RED AND THE BLACK
+bing_word_counts_tnum <- df8_lc %>%
+  inner_join(bing) %>%  
+  count(word, sentiment, sort = TRUE)
+
+
+# numbers of 2 levels sentiment
+bing_value_count_tnum <- df8_lc %>% 
+  inner_join(bing) %>% count(sentiment, sort = TRUE)
+
+randb_bing_senti_tnum <- df8_lc %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(property, index = linenumber %/% 60, sentiment) %>%
+  pivot_wider(names_from = sentiment, values_from = n, values_fill = 0) %>% 
+  mutate(sentiment = positive-negative)
+
+# Sentiment plot of bing
+p_bing_tnum <- ggplot(randb_bing_senti_tnum, aes(index, sentiment)) + geom_col(show.legend = FALSE, fill = "limegreen")+
+  labs(title = "Sentiment of THE RED AND BLACK by lexicons BING after TNUM")
+
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+# loughran
+# value of words in THE RED AND THE BLACK
+loug_word_counts_tnum <- df8_lc %>%
+  inner_join(loug, by = "word") %>%  
+  count(word, sentiment, sort = TRUE)
+
+
+# numbers of 2 levels sentiment
+loug_value_count_tnum <- df8_lc %>% 
+  inner_join(loug, by = "word") %>% count(sentiment, sort = TRUE)
+
+loug_value_count_tnum <- df8_lc %>%
+  inner_join(loug, by = "word") %>%
+  count(property, index = linenumber %/% 60, sentiment) %>%
+  pivot_wider(names_from = sentiment, values_from = n, values_fill = 0) %>% 
+  mutate(sentiment = positive-negative)
+
+# Sentiment plot of bing
+p_loug_tnum <- ggplot(loug_value_count_tnum, aes(index, sentiment)) + geom_col(show.legend = FALSE, fill = "turquoise3")+
+  labs(title = "Sentiment of THE RED AND BLACK by lexicons LOUGHRAN after TNUM")
+
+```
+
+- The following graphs shows the comparison of sentiment of four kinds of lexicon between the one done before and the one done using TNUM. 
+- After TNUM, the trends of sentiment looks similar to the original one under the lexicon NRC. 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# library("egg")
+grid.arrange(p_nrc+ ylim(-30, 60), 
+             p_nrc_tnum+ ylim(-30, 60), nrow = 2, ncol = 1)
+```
+
+- After TNUM, the trends of sentiment also looks similar to the original one under the lexicon AFINN. 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+grid.arrange(p_afinn+ ylim(-50, 100)
+             , p_afinn_tnum+ ylim(-50, 100), nrow = 2, ncol = 1)
+```
+
+- After TNUM, the absolute value of sentiment changes little compared to the original one under the lexicon BING. Higher value of sentiment of index can also be noticed. 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+grid.arrange(p_bing+ ylim(-45, 75), 
+             p_bing_tnum+ ylim(-45, 75), nrow = 2, ncol = 1)
+```
+
+- After TNUM, the trends of sentiment also looks similar to the original one under the lexicon LOUGHRAN.  
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+grid.arrange(p_loug+ ylim(-25, 15), 
+             p_loug_tnum+ ylim(-25, 15), nrow = 2, ncol = 1)
+```
+
+
+
+
+# Create tags
+
+- Since _THE RED AND THE BLACK_ includes two love stories: Julien and Madame de Rênal, Julien and Mathilde de la Mole, tag 'love' is created. From the above analysis, word love appears in the book for 278 times. 
+- Plot of numbers of 'love' in each paragraph shows the love story goes through the whole book. 
+```{r message=FALSE, warning=FALSE, include=FALSE}
+
+ch_num_df <- function(df) {
+  n <- nrow(df)
+  vector <- rep(0, n)
+  subject <- df$subject
+    for(i in 1 : n) {
+      vector[i] <- as.numeric(substring(str_split(subject[i], "[:/]")[[1]][3], 1))
+    }
+  return(vector)
+}
+
+
+# tag-love
+tnum.tagByQuery("randb# has * = REGEXP(\"love\")", 
+                "reference: love")
+love <- tnum.query("randb# has * = REGEXP(\"love\")", max = 1400)
+love_df <- tnum.objectsToDf(love) %>% filter(date == "2021-11-29")
+```
+```{r echo=FALSE}
+ggplot()+
+  geom_bar(aes(ch_num_df(love_df)), stat = "count")+
+  labs(x = "chapter", title = "Frequency of 'love' in each chapter")
+
+```
+
+- Here follows plots of number of words in each chapter for three main character: Julien, Renal and Mole. 
+- An interesting point can be noticed that Renal mostly presents in the first half of all the chapters and it makes sense because Julien first fell in love with Renal. Similarly, Mole presents in the second half of the whole chapters and it is because then Julien met Mole. 
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# tag-Julien
+# 6279
+tnum.tagByQuery("randb# has * = REGEXP(\"Julien\")", 
+                "reference: Julien")
+julien <- tnum.query("randb# has * = REGEXP(\"Julien\")", max = 6300)
+julien_df <- tnum.objectsToDf(julien) %>% filter(date == "2021-11-29")
+ggplot()+
+  geom_bar(aes(ch_num_df(julien_df)), stat = "count", width = 1)+
+  labs(x = "chapter", title = "Frequency of 'Julien' in each chapter")
+
+# the query for the tag gives the same references
+# julien_tag <- tnum.query("@reference: Julien")
+# julien_tag <- tnum.objectsToDf(julien_tag)
+
+# tnum.makeTnumPhraseGraph(julien_df)
+
+# tag-Renal
+# 2115
+tnum.tagByQuery("randb# has * = REGEXP(\"Renal\")",
+                         "reference: Renal")
+renal <- tnum.query("randb# has* = REGEXP(\"Renal\")", max = 2200)
+renal_df <- tnum.objectsToDf(renal) %>% filter(date == "2021-11-29")
+ggplot()+
+  geom_bar(aes(ch_num_df(renal_df)), stat = "count")+
+  labs(x = "chapter", title = "Frequency of 'Renal' in each chapter")
+
+# tag-Mole
+# 1143
+tnum.tagByQuery("randb# has * = REGEXP(\"Mole\")", 
+                        "reference: Mole")
+mole <- tnum.query("randb# has * = REGEXP(\"Mole\")", max = 1400)
+mole_df <- tnum.objectsToDf(mole) %>% filter(date == "2021-11-29")
+ggplot()+
+  geom_bar(aes(ch_num_df(mole_df)), stat = "count")+
+  labs(x = "chapter", title = "Frequency of 'Mole' in each chapter")
+
+
+```
+
+
+
+
